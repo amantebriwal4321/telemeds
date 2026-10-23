@@ -8,11 +8,12 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   cacheComponents: true,
   partialPrefetching: true,
-  serverExternalPackages: ["@huggingface/transformers", "onnxruntime-node", "onnxruntime-web", "sharp"],
+  serverExternalPackages: ["@huggingface/transformers", "onnxruntime-node", "onnxruntime-web", "sharp", "kokoro-js", "phonemizer"],
   turbopack: {
     resolveAlias: {
       "onnxruntime-node": "./lib/empty.ts",
       sharp: "./lib/empty.ts",
+      "fs/promises": "./lib/empty.ts",
     },
     rules: {
       "*.css": {

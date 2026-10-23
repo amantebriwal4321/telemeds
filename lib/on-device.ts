@@ -1,6 +1,7 @@
 import { acknowledgementInstruction } from "./dialogue";
 import { installEgressGuard } from "./egress";
 import { language } from "./language";
+import { loadStateFromEvent, type LoadState, type ProgressEvent } from "./model-progress";
 import { modelSource } from "./model-source";
 
 /** The full system prompt in lib/prompt.ts is the behaviour spec. This short line is all the small model sees. */
@@ -12,9 +13,7 @@ function thanksPrompt(): string {
   ].join(" ");
 }
 
-export type ModelProgress = {
-  label: string;
-};
+export type ModelProgress = LoadState;
 
 type GenerateFn = (
   messages: Array<{ role: string; content: string }>,
@@ -31,34 +30,19 @@ export type OnDeviceEngine = {
   transcribe: (audio: Float32Array) => Promise<string>;
 };
 
-type ProgressEvent = {
-  status?: string;
-  file?: string;
-  name?: string;
-  progress?: number;
-};
-
 let configured: Promise<void> | null = null;
 let languageModel: Promise<GenerateFn | null> | null = null;
 let listeningModel: Promise<TranscribeFn | null> | null = null;
-
-function fileLabel(file: string | undefined, fallback: string): string {
-  if (!file) return fallback;
-  const clean = file.split("?")[0] ?? file;
-  const base = clean.split("/").pop();
-  return base || fallback;
-}
+let languageReady = false;
 
 function report(kind: string, event: ProgressEvent, onProgress?: (progress: ModelProgress) => void) {
   if (!onProgress) return;
-  if (event.status === "progress" && typeof event.progress === "number") {
-    const name = fileLabel(event.file ?? event.name, kind);
-    onProgress({ label: `${kind}: ${name} ${Math.round(event.progress)}%` });
-    return;
-  }
-  if (event.status === "done" || event.status === "ready") {
-    onProgress({ label: `${kind} is on this device` });
-  }
+  const state = loadStateFromEvent(kind, event);
+  if (state) onProgress(state);
+}
+
+export function languageModelIsReady(): boolean {
+  return languageReady;
 }
 
 function extractGenerated(output: unknown): string | null {
@@ -80,7 +64,8 @@ function extractTranscript(output: unknown): string {
   return typeof text === "string" ? text.replace(/\s+/g, " ").trim() : "";
 }
 
-async function configure() {
+/** Shared by the language model, Whisper, and Kokoro. One WebAssembly runtime, served by this app. */
+export async function configureRuntime() {
   installEgressGuard();
   const { env } = await import("@huggingface/transformers");
   const onnx = env.backends.onnx as {
@@ -102,7 +87,7 @@ async function configure() {
 
 function ensureConfigured(): Promise<void> {
   if (!configured) {
-    configured = configure().catch((error: unknown) => {
+    configured = configureRuntime().catch((error: unknown) => {
       configured = null;
       throw error;
     });
@@ -160,8 +145,16 @@ function ensureListeningModel(onProgress?: (progress: ModelProgress) => void): P
 
 export function preloadLanguageModel(onProgress?: (progress: ModelProgress) => void): Promise<boolean> {
   return ensureLanguageModel(onProgress).then(
-    (model) => Boolean(model),
-    () => false,
+    (model) => {
+      languageReady = Boolean(model);
+      if (languageReady) onProgress?.({ phase: "ready", label: "Language model: ready" });
+      return languageReady;
+    },
+    () => {
+      languageReady = false;
+      onProgress?.({ phase: "failed", label: "Language model: failed" });
+      return false;
+    },
   );
 }
 
@@ -169,6 +162,7 @@ export function prepareEngine(onProgress?: (progress: ModelProgress) => void): P
   const generateModel = ensureLanguageModel(onProgress);
   return Promise.resolve({
     async generate(latestUser: string) {
+      if (!languageReady) return null;
       const generate = await generateModel.catch(() => null);
       if (!generate) return null;
       try {

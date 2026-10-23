@@ -26,7 +26,11 @@ export type LanguageProfile = {
     maxNewTokens: number;
   };
   tts: {
-    engine: "speech-synthesis";
+    engine: "kokoro";
+    model: string;
+    dtype: string;
+    voice: string;
+    speed: number;
     rate: number;
     pitch: number;
     preferLocal: boolean;
@@ -94,16 +98,26 @@ export type LanguageProfile = {
       preparing: string;
       summary: string;
     };
-    errors: {
-      modelFailed: string;
-      generic: string;
-      emptyAudio: string;
-      micDenied: string;
-      micMissing: string;
-      tooLong: string;
-      tooQuiet: string;
-      voiceUnavailable: string;
-    };
+    modelIdle: string;
+  modelReady: string;
+  modelFailedStatus: string;
+  voiceIdle: string;
+  voiceReady: string;
+  voiceFailed: string;
+  voiceDevice: string;
+  speechIdle: string;
+  errors: {
+    modelFailed: string;
+    generic: string;
+    emptyAudio: string;
+    micDenied: string;
+    micMissing: string;
+    micInsecure: string;
+    speechFailed: string;
+    tooLong: string;
+    tooQuiet: string;
+    voiceUnavailable: string;
+  };
   };
   safety: {
     selfHarmSpoken: string;
@@ -143,7 +157,11 @@ export const language: LanguageProfile = {
     maxNewTokens: 40,
   },
   tts: {
-    engine: "speech-synthesis",
+    engine: "kokoro",
+    model: "onnx-community/Kokoro-82M-v1.0-ONNX",
+    dtype: "q8",
+    voice: "af_heart",
+    speed: 0.92,
     rate: 0.9,
     pitch: 1.08,
     preferLocal: true,
@@ -202,7 +220,7 @@ export const language: LanguageProfile = {
     welcomePoints: [
       "No account, no cookies, and no server that receives your voice or your words.",
       "Your words live in this tab’s memory, and nowhere else.",
-      "The first visit downloads public model files, about 140 megabytes to reply and about 40 more if you use the microphone. They are the same files for every person. Your words are not in that download.",
+      "The first visit may download public model files: about 140 megabytes for an optional reply model, about 90 megabytes for Noor's voice, and about 40 more if you use the microphone. They are the same files for every person. Your words are not in that download. The conversation does not wait for them.",
       "Erase everything, or close the tab, and the conversation is gone.",
     ],
     topicsLabel: "She will ask, only one thing at a time, about",
@@ -219,18 +237,26 @@ export const language: LanguageProfile = {
     summaryNote: "Not a diagnosis. Read it together, then erase it when you are done.",
     preparing: "Noor is coming onto this device. Only public model files are downloading. Your words stay here.",
     onDeviceLine: "On this device · nothing is sent away",
+    modelIdle: "Language model: not downloaded",
+    modelReady: "Language model: ready",
+    modelFailedStatus: "Language model: failed",
+    voiceIdle: "Voice: not downloaded",
+    voiceReady: "Voice: ready",
+    voiceFailed: "Voice: failed",
+    voiceDevice: "Voice: this device",
+    speechIdle: "Speech model: not downloaded",
     privacyTitle: "Privacy",
     privacyStoredTitle: "What stays on this device",
     privacyStored: [
       "The words of this conversation, in this tab’s memory only, until you tap Erase everything or leave.",
-      "Public model files, the same files for every person, in the browser cache so Noor can run again without downloading them. They do not contain your words.",
+      "Public model files for the optional language model, the voice, and speech-to-text, the same files for every person, in the browser cache. They do not contain your words.",
     ],
     privacyNotTitle: "What does not happen",
     privacyNot: [
       "Your voice and your words are not sent to a server, a clinic, or a model company.",
       "No account, no cookies, and no saved conversation in browser storage.",
       "No analytics, and no outside fonts or scripts.",
-      "Speech uses an offline voice already on this device. If this device has no offline voice, the words stay on the screen. A network voice is not used.",
+      "Noor speaks with a voice model on this device (a soft female voice). If that model is still downloading, she uses an offline voice already on the device, and if there is none, the words stay on the screen. A network voice is not used.",
       "Erase everything drops the conversation at once. The cached model files remain, because they are not your story.",
       "If you tap Copy for a doctor, the words go to the clipboard, which this app does not clear for you.",
     ],
@@ -261,12 +287,14 @@ export const language: LanguageProfile = {
       modelFailed: "Noor answered with her prepared words. Nothing was sent away.",
       generic: "Something went quiet on this device. Please try again.",
       emptyAudio: "I could not hear words. Please try again, or type.",
-      micDenied: "The microphone is not available. You can type instead. That is just as good.",
+      micDenied: "Microphone permission was denied. You can type instead. That is just as good.",
       micMissing: "This browser cannot use the microphone. You can type instead.",
       tooLong: "That was a little long. Please say it more briefly, or type.",
       tooQuiet: "I did not catch any sound. Please try again, or type.",
+      micInsecure: "The microphone needs a secure page. You can type instead. That is just as good.",
+      speechFailed: "The speech model did not finish on this device. You can type instead. Nothing was sent away.",
       voiceUnavailable:
-        "This device has no offline voice. The words are on the screen. Nothing was sent away to speak them.",
+        "The words are on the screen. Nothing was sent away to speak them.",
     },
   },
   safety: {

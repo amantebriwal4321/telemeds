@@ -45,10 +45,10 @@ The first visit in a browser still downloads the public model files from Hugging
 
 ## How a check-in works
 
-1. She taps **Begin**. The greeting is a fixed line, spoken at once: “Assalaam-o-alaikum. I am Noor…” Then one question: how she is feeling. The language-model weights start downloading in the background.
-2. She speaks or types. Audio is decoded in the tab. Nothing is uploaded.
-3. The dialogue in `lib/dialogue.ts` decides the next step. A small on-device model may add one short thank-you sentence. Questions, home comforts, first aid, the clinician line, and the closing are written in the app. If the model’s sentence is not a short thank-you, it is dropped and the prepared line is used: “Thank you for telling me.”
-4. Speech uses a voice already on the device (`speechSynthesis`, `localService` only), slower and a little higher, preferring a female voice when the device has one. A network voice is never used. If the device has no offline voice, the words stay on the screen.
+1. She taps **Begin**. The greeting is a fixed line, spoken at once: “Assalaam-o-alaikum. I am Noor…” Then one question: how she is feeling. The language-model weights and Noor's voice start downloading in the background. The screen says whether each one is not downloaded, downloading (with a percentage, or megabytes when the file server omits a length), ready, or failed.
+2. She speaks or types. The microphone button stays on while those files download. A tap asks for permission. If she says no, the screen says permission was denied and she can type. Audio is decoded in the tab. Nothing is uploaded. If the speech model is still arriving, the screen says “Speech model: downloading” with progress, then transcribes on the device.
+3. The dialogue in `lib/dialogue.ts` answers immediately with the next scripted line. It does not wait for the language model. If that model is already on the device, it may replace the scripted “Thank you for telling me” with its own short thank-you, and only if that comes back within 3 seconds and passes the safety filter. Otherwise the scripted line stands, with no error. Questions, home comforts, first aid, the clinician line, and the closing are written in the app.
+4. Speech prefers Kokoro (`onnx-community/Kokoro-82M-v1.0-ONNX`, 8-bit, voice `af_heart`, a soft female English voice) once those public files are on the device. Until then, or if Kokoro fails, Noor uses an offline `speechSynthesis` voice already on the device. If there is no offline voice either, the words stay on the screen. A network voice is never used.
 5. She can copy a summary for a clinician. Copying uses the clipboard, which this app does not clear. **Erase everything** drops the conversation from the tab.
 
 Noor leads, one question at a time: how she is, what is troubling her in her own words, a simple comfort, and basic first aid if hands can help. She does not take a physician’s history. She does not probe pregnancy, menstrual health, sexual life, family honour, or an examination.
@@ -66,8 +66,8 @@ The last words of a closing are “Khuda hafiz.”
 | Runtime | `@huggingface/transformers` in the browser, WebAssembly, `dtype: q8` | One stack for speech and text. WebGPU is not on every phone, and a failed WebGPU load can pull a much larger fp32 file. WebLLM was set aside because it has no reliable CPU fallback. |
 | Speech to text | `onnx-community/whisper-tiny` (multilingual) | About 40 MB of quantized weights. Loaded only if she uses the microphone. The language code stays in `lib/language.ts`, so Pashto or Dari can be pointed at later. English-only Whisper was not used, because that would block those languages. |
 | Language model | `onnx-community/SmolLM2-135M-Instruct-ONNX` | About 140 MB quantized. Larger instruct models that were measured (Qwen 0.5B and similar) were several hundred megabytes. 135M is weak. It is not asked to practice medicine. |
-| Voice | The device’s own offline speech synthesis | Remote voices can send the sentence off the device. A local male voice is used if that is the only offline voice. No voice is better than a network voice. |
-| Weights | Hugging Face, then the browser Cache API (`transformers-cache`) and the service worker (`aram-models-v1`) | GET of public files only. After the first successful download, a later visit can run from cache. |
+| Voice | Kokoro 82M, voice `af_heart`, WebAssembly, about 90 MB, lazy | A small neural female voice, the same files for every person. Playback uses the Web Audio API. If it is not ready, an offline `speechSynthesis` voice is used, then text only. Remote voices are not used. |
+| Weights | Hugging Face, then the browser Cache API (`transformers-cache`, and Kokoro's voice cache) | GET of public files only. The service worker used to hold the response until the whole file was cached, which hid progress and froze the check-in. It now returns the bytes immediately and does not intercept model hosts. |
 
 The WebAssembly files (`ort-wasm-simd-threaded.jsep.wasm`, about 21 MB, and its loader) are served by this app from `/onnx/`. `wasm-unsafe-eval` in the content security policy lets the browser compile that WebAssembly. It does not allow JavaScript `eval`.
 
@@ -77,7 +77,7 @@ Threads stay at 1 and the ONNX proxy is off, so the page does not need cross-ori
 
 To stop the browser talking to Hugging Face at all:
 
-1. Put the model repositories under `public/models/`, keeping the repo id as the path. The files the runtime asks for include `config.json`, tokenizer files, and the `*_quantized.onnx` weights for `onnx-community/SmolLM2-135M-Instruct-ONNX` and, if you want the microphone, `onnx-community/whisper-tiny`.
+1. Put the model repositories under `public/models/`, keeping the repo id as the path. The files the runtime asks for include `config.json`, tokenizer files, and the `*_quantized.onnx` weights for `onnx-community/SmolLM2-135M-Instruct-ONNX`, `onnx-community/Kokoro-82M-v1.0-ONNX` (and its `voices/af_heart.bin`), and, if you want the microphone, `onnx-community/whisper-tiny`.
 2. In `lib/model-source.ts`, set `preferLocalFiles` to `true`.
 3. Remove the Hugging Face origins from `MODEL_ORIGINS` and from the host list in `public/sw.js`. The content security policy is built from `MODEL_ORIGINS`.
 
@@ -100,23 +100,22 @@ Two ways her words can leave the app, both started by her: **Copy for a doctor**
 
 ## What was verified
 
-On 23 October 2026, in this environment:
+On 23 October 2026, against `next start` (the same static build Vercel serves), in headless Chrome:
 
-- `npm test` (31 tests), `npm run lint`, and `npm run build` passed. The production build is a static page. There is no `/api` route.
-- Headless Chrome loaded `next start`, showed the Privacy panel, and showed the opening “Assalaam-o-alaikum”.
-- A canary sentence was typed and sent. Within about 20 seconds the next line was the prepared question (“Thank you for telling me. What is troubling you most…”). Chrome’s netlog showed the canary in no request. The only page-associated reads off the device were GET requests for SmolLM2 tokenizer and config files on `huggingface.co` and one weight object on `us.aws.cdn.hf.co`.
-- An earlier run, before the thank-you filter, showed this 135M model recite a fragment of a long clinical prompt (“if she says she wants to die…”). The runtime no longer sends that prompt to the model. Anything that is not a short thank-you is discarded. That filter is unit-tested.
-- Headless Chrome had no offline voice. The words stayed on the screen, with a note that nothing was sent away to speak them.
-- The console reported that some model responses omit `Content-Length`, so the progress label can sit at 0% while the file is still arriving.
+- `npm test` (41 tests), `npm run lint`, and `npm run build` passed. There is no `/api` route.
+- The Privacy panel was visible. **Begin** opened with “Assalaam-o-alaikum”. The **Speak** button was enabled immediately, while the language model was still downloading.
+- A full check-in was typed. “I have a headache” was answered at once with the next question (“What is troubling you most…”). “It started this morning” was answered with a home comfort. **End and summarize** closed with “Khuda hafiz” and a clinician summary. The screen did not stay on “Noor is thinking”.
+- The status line showed the language model and the voice downloading (megabytes, because the file server omitted Content-Length) and, on this fast link, reaching **ready**.
+- Chrome’s network log did not contain those sentences. The only page-associated reads off the device were GETs for public SmolLM2 and Kokoro files on `huggingface.co` and `us.aws.cdn.hf.co`.
 
-Not verified here: a real microphone, a real GPU, WebGPU, a completed Whisper transcription, a woman’s review of the voice, or a full offline reload after the weights had finished caching. The headless browser also contacts Google hosts of its own (component updates). Those requests were not tied to the page and did not contain the canary. They are the browser, not Aram.
+Not verified here: a real microphone or a permission prompt on a phone, hearing Kokoro or any speaker (headless Chrome blocked `AudioContext` because the test’s click is not a user gesture; a real tap on **Begin** or **Send** resumes it), a GPU, WebGPU, a completed Whisper transcription, and a woman’s review of the voice. The headless browser also contacts Google hosts of its own for component updates. Those requests were not the app and did not contain her words.
 
 ## Known limits
 
-- A 135M model gives weaker, slower answers than a hosted large model. Clinical wording does not depend on it. Expect the prepared sentences most of the time.
-- The first visit downloads on the order of 140 MB before a reply can use the model, about 40 MB more if she uses the microphone, and about 21 MB of WebAssembly from this app. A slow link will sit on “Noor is coming onto this device” for a long time. Typing still works, and the prepared replies do not wait on the weights when the situation is urgent (self-harm, hands-on first aid, or another red flag).
+- A 135M model gives weaker, slower answers than a large hosted model. The check-in does not wait for it. Expect the scripted sentences. A thank-you from the model is optional, and only after the weights are already on the device.
+- The first visit may download about 140 MB for that optional model, about 90 MB for Kokoro, about 40 MB more if she uses the microphone, and about 21 MB of WebAssembly from this app. The conversation proceeds during the download. The status line shows the progress.
 - Offline use starts after those files have been cached once. Erase does not delete them.
-- The spoken voice depends on the operating system. Some phones have no offline female voice. Some have no offline voice at all.
+- Kokoro’s `af_heart` voice is the one Noor prefers. It was not listened to in this environment. Until it has downloaded, speech falls back to whatever offline voice the phone has, which varies, and then to text. Some phones have no offline voice at all.
 - `unsafe-inline` remains in `script-src` because the Next.js runtime still emits an inline bootstrap. See the threat model.
 - This is not a medical device. The first-aid script is a short reminder, not training.
 
