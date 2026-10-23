@@ -3,54 +3,62 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Composer } from "@/components/composer";
+import { PrivacyPanel } from "@/components/privacy-panel";
 import { ProgressSteps } from "@/components/progress-steps";
 import { SummaryCard } from "@/components/summary-card";
 import { Transcript } from "@/components/transcript";
 import { UrgentPanel } from "@/components/urgent-panel";
 import { Welcome } from "@/components/welcome";
 import { Button } from "@/components/ui/button";
-import { audioUploadName } from "@/lib/audio";
+import { blobToMono16k } from "@/lib/capture";
+import { emptyNotes, openingTurn, planReply, type Notes } from "@/lib/dialogue";
+import { clearSensitive, installEgressGuard, noteSensitive } from "@/lib/egress";
 import { language } from "@/lib/language";
 import { limits } from "@/lib/limits";
+import { preloadLanguageModel, prepareEngine } from "@/lib/on-device";
+import { mentionsMedicalRedFlag, mentionsSelfHarm, needsHandsOnFirstAid } from "@/lib/safety";
+import { speakAloud } from "@/lib/speech";
 import { formatSummary } from "@/lib/summary";
-import type { CheckInSummary, CheckInTurn, Phase, Turn, UrgentKind } from "@/lib/types";
+import type { CheckInSummary, Phase, Turn, UrgentKind } from "@/lib/types";
 
-const SILENT_WAV =
-  "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
-
-type Status = "idle" | "listening" | "transcribing" | "thinking" | "speaking";
+type Status = "idle" | "listening" | "transcribing" | "thinking" | "speaking" | "preparing";
 
 export function Intake() {
   const [started, setStarted] = useState(false);
   const [cleared, setCleared] = useState(false);
   const [messages, setMessages] = useState<Turn[]>([]);
   const [phase, setPhase] = useState<Phase | null>(null);
+  const [notes, setNotes] = useState<Notes>(emptyNotes());
   const [summary, setSummary] = useState<CheckInSummary | null>(null);
   const [urgentKind, setUrgentKind] = useState<UrgentKind>("none");
   const [status, setStatus] = useState<Status>("idle");
+  const [progress, setProgress] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [hearAgain, setHearAgain] = useState<string | null>(null);
+  const [showPrivacy, setShowPrivacy] = useState(false);
 
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<number | null>(null);
-  const urlsRef = useRef<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const generation = useRef(0);
   const endRef = useRef<HTMLDivElement | null>(null);
   const phaseRef = useRef<Phase | null>(null);
+  const notesRef = useRef<Notes>(emptyNotes());
   const messagesRef = useRef<Turn[]>([]);
+  const bootingRef = useRef(false);
   const wipeRef = useRef<() => void>(() => {});
   const releaseRef = useRef<() => void>(() => {});
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
   }, [messages, summary, error, status, started]);
 
   useEffect(() => {
+    window.speechSynthesis?.getVoices();
     const onHide = () => wipeRef.current();
     const onShow = (event: PageTransitionEvent) => {
       if (event.persisted) wipeRef.current();
@@ -76,22 +84,19 @@ export function Intake() {
     if (recorder && recorder.state !== "inactive") recorder.stop();
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
-    const audio = audioRef.current;
-    if (audio) {
-      audio.pause();
-      audio.removeAttribute("src");
-    }
-    for (const url of urlsRef.current) URL.revokeObjectURL(url);
-    urlsRef.current = [];
+    window.speechSynthesis?.cancel();
   }
 
   function wipe() {
     generation.current += 1;
     abortRef.current?.abort();
     releaseMedia();
+    clearSensitive();
+    bootingRef.current = false;
     setStarted(false);
     setMessages([]);
     setPhase(null);
+    setNotes(emptyNotes());
     setSummary(null);
     setUrgentKind("none");
     setStatus("idle");
@@ -99,156 +104,125 @@ export function Intake() {
     setError(null);
     setCopied(false);
     setHearAgain(null);
+    setShowPrivacy(false);
     setCleared(true);
   }
 
   useEffect(() => {
     phaseRef.current = phase;
+    notesRef.current = notes;
     messagesRef.current = messages;
     wipeRef.current = wipe;
     releaseRef.current = releaseMedia;
   });
 
-  function unlockAudio() {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.src = SILENT_WAV;
-    audio.muted = true;
-    const pending = audio.play();
-    if (pending) {
-      pending
-        .then(() => {
-          audio.pause();
-          audio.muted = false;
-        })
-        .catch(() => {
-          audio.muted = false;
-        });
-    }
-  }
-
-  function beginRequest() {
+  function beginSpeech() {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     return controller;
   }
 
-  async function readError(response: Response): Promise<string> {
-    try {
-      const data = (await response.json()) as { error?: unknown };
-      if (typeof data.error === "string" && data.error) return data.error;
-    } catch {
-      /* The body was not JSON. Fall through to the calm generic line. */
-    }
-    return language.ui.errors.generic;
-  }
-
-  async function speak(text: string, gen: number, signal: AbortSignal) {
+  async function speak(text: string, gen: number) {
+    const controller = beginSpeech();
     setStatus("speaking");
     setHearAgain(text);
-    try {
-      const response = await fetch("/api/speak", {
-        method: "POST",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-        signal,
-      });
-      if (gen !== generation.current) return;
-      if (!response.ok) {
-        setError(await readError(response));
-        setStatus("idle");
-        return;
-      }
-      const blob = await response.blob();
-      if (gen !== generation.current) return;
-      const url = URL.createObjectURL(blob);
-      urlsRef.current.push(url);
-      const audio = audioRef.current;
-      if (!audio) {
-        setStatus("idle");
-        return;
-      }
-      audio.muted = false;
-      audio.src = url;
-      await audio.play();
-      await new Promise<void>((resolve) => {
-        const done = () => resolve();
-        audio.addEventListener("ended", done, { once: true });
-        audio.addEventListener("error", done, { once: true });
-        signal.addEventListener("abort", done, { once: true });
-      });
-      if (gen === generation.current) setStatus("idle");
-    } catch (err) {
-      if (gen !== generation.current || (err instanceof DOMException && err.name === "AbortError")) return;
-      setError(language.ui.errors.tapToHear);
-      setStatus("idle");
-    }
+    const result = await speakAloud(text, controller.signal);
+    if (gen !== generation.current || abortRef.current !== controller) return;
+    if (result === "silent") setError(language.ui.errors.voiceUnavailable);
+    setStatus(bootingRef.current ? "preparing" : "idle");
   }
 
-  async function ask(nextMessages: Turn[], intent: "start" | "continue") {
+  function applyPlan(text: string, modelAcknowledgement: string | null, modelAttempted: boolean, gen: number) {
+    const planned = planReply({
+      phase: phaseRef.current ?? "wellbeing",
+      latestUser: text,
+      notes: notesRef.current,
+      modelAcknowledgement,
+      modelAttempted,
+    });
+    if (gen !== generation.current) return;
+    const nextMessages = [...messagesRef.current, { role: "assistant" as const, content: planned.turn.reply }];
+    messagesRef.current = nextMessages;
+    notesRef.current = planned.notes;
+    phaseRef.current = planned.turn.phase;
+    setMessages(nextMessages);
+    setNotes(planned.notes);
+    setPhase(planned.turn.phase);
+    setSummary(planned.turn.summary);
+    setUrgentKind(planned.turn.urgent ? planned.turn.urgentKind : "none");
+    if (planned.prepared) setError(language.ui.errors.modelFailed);
+    void speak(planned.turn.reply, gen);
+  }
+
+  async function respond(text: string) {
     const gen = generation.current;
-    const controller = beginRequest();
+    const latest = text.trim().slice(0, limits.textMessage);
+    noteSensitive(latest);
+    const immediate =
+      mentionsSelfHarm(latest) ||
+      needsHandsOnFirstAid(latest) ||
+      mentionsMedicalRedFlag(latest) ||
+      latest === language.ui.skipUtterance ||
+      latest === language.ui.finishUtterance;
+    if (immediate) {
+      applyPlan(latest, null, false, gen);
+      return;
+    }
     setStatus("thinking");
     setError(null);
     setCopied(false);
     try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          intent,
-          messages: nextMessages,
-          phase: phaseRef.current,
-        }),
-        signal: controller.signal,
+      installEgressGuard();
+      const engine = await prepareEngine((update) => {
+        if (gen === generation.current) setProgress(update.label);
       });
       if (gen !== generation.current) return;
-      if (!response.ok) {
-        setError(await readError(response));
-        setStatus("idle");
-        return;
-      }
-      const data = (await response.json()) as { turn?: CheckInTurn };
-      const turn = data.turn;
-      if (!turn?.reply) {
-        setError(language.ui.errors.generic);
-        setStatus("idle");
-        return;
-      }
+      const modelText = await engine.generate(latest);
       if (gen !== generation.current) return;
-      setMessages(
-        intent === "start" ? [{ role: "assistant", content: turn.reply }] : [...nextMessages, { role: "assistant", content: turn.reply }],
-      );
-      setPhase(turn.phase);
-      setSummary(turn.summary);
-      setUrgentKind(turn.urgent ? turn.urgentKind : "none");
-      await speak(turn.reply, gen, controller.signal);
-    } catch (err) {
-      if (gen !== generation.current || (err instanceof DOMException && err.name === "AbortError")) return;
-      setError(language.ui.errors.generic);
-      setStatus("idle");
+      applyPlan(latest, modelText, true, gen);
+    } catch {
+      if (gen !== generation.current) return;
+      applyPlan(latest, null, true, gen);
     }
   }
 
   function begin() {
-    unlockAudio();
+    installEgressGuard();
+    const turn = openingTurn();
+    const gen = generation.current;
+    bootingRef.current = true;
+    const opening = [{ role: "assistant" as const, content: turn.reply }];
+    messagesRef.current = opening;
+    phaseRef.current = turn.phase;
+    notesRef.current = emptyNotes();
     setStarted(true);
     setCleared(false);
-    void ask([], "start");
+    setMessages(opening);
+    setPhase(turn.phase);
+    setNotes(emptyNotes());
+    setSummary(null);
+    setUrgentKind("none");
+    setError(null);
+    void speak(turn.reply, gen);
+    void preloadLanguageModel((update) => {
+      if (generation.current === gen) setProgress(update.label);
+    }).then(() => {
+      if (generation.current !== gen) return;
+      bootingRef.current = false;
+      setProgress(null);
+      setStatus((current) => (current === "preparing" ? "idle" : current));
+    });
   }
 
   function submitText(text: string) {
     const trimmed = text.trim();
     if (!trimmed || status === "listening" || status === "transcribing" || status === "thinking") return;
-    unlockAudio();
-    audioRef.current?.pause();
     setDraft("");
-    const next = [...messages, { role: "user" as const, content: trimmed.slice(0, limits.textMessage) }];
+    const next = [...messagesRef.current, { role: "user" as const, content: trimmed.slice(0, limits.textMessage) }];
     setMessages(next);
-    void ask(next, "continue");
+    messagesRef.current = next;
+    void respond(trimmed);
   }
 
   async function stopAndTranscribe() {
@@ -267,56 +241,40 @@ export function Intake() {
       setStatus("idle");
       return;
     }
-    const named = audioUploadName(blob.type);
-    if (!named) {
-      setError(language.ui.errors.generic);
-      setStatus("idle");
-      return;
-    }
     setStatus("transcribing");
     setError(null);
-    const controller = beginRequest();
-    const file = new File([blob], named.filename, { type: named.mime });
-    const form = new FormData();
-    form.append("audio", file);
     try {
-      const response = await fetch("/api/transcribe", {
-        method: "POST",
-        cache: "no-store",
-        body: form,
-        signal: controller.signal,
+      installEgressGuard();
+      const samples = await blobToMono16k(blob);
+      const engine = await prepareEngine((update) => {
+        if (gen === generation.current) setProgress(update.label);
       });
       if (gen !== generation.current) return;
-      if (!response.ok) {
-        setError(await readError(response));
-        setStatus("idle");
-        return;
-      }
-      const data = (await response.json()) as { text?: unknown };
-      if (typeof data.text !== "string" || !data.text.trim()) {
+      const text = await engine.transcribe(samples);
+      if (gen !== generation.current) return;
+      if (!text) {
         setError(language.ui.errors.emptyAudio);
         setStatus("idle");
         return;
       }
-      const next = [...messagesRef.current, { role: "user" as const, content: data.text.trim() }];
-      if (gen !== generation.current) return;
+      const next = [...messagesRef.current, { role: "user" as const, content: text.slice(0, limits.textMessage) }];
       setMessages(next);
-      await ask(next, "continue");
-    } catch (err) {
-      if (gen !== generation.current || (err instanceof DOMException && err.name === "AbortError")) return;
+      messagesRef.current = next;
+      await respond(text);
+    } catch {
+      if (gen !== generation.current) return;
       setError(language.ui.errors.generic);
       setStatus("idle");
     }
   }
 
   async function toggleMic() {
-    if (status === "transcribing" || status === "thinking") return;
+    if (status === "transcribing" || status === "thinking" || status === "preparing") return;
     if (status === "listening") {
       recorderRef.current?.stop();
       return;
     }
-    unlockAudio();
-    audioRef.current?.pause();
+    window.speechSynthesis?.cancel();
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
       setError(language.ui.errors.micMissing);
       return;
@@ -372,40 +330,46 @@ export function Intake() {
   }
 
   const blocked = status === "transcribing" || status === "thinking";
-  const statusText =
+  const baseStatus =
     error ??
-    (summary && status === "idle"
-      ? language.ui.status.summary
-      : language.ui.status[status]);
+    (summary && status === "idle" ? language.ui.status.summary : language.ui.status[status]);
+  const statusText = progress ? `${baseStatus} ${progress}` : baseStatus;
 
   return (
     <div className="mx-auto flex h-dvh w-full max-w-lg flex-col">
       <header className="flex items-center justify-between gap-3 px-5 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3">
         <div>
           <p className="font-heading text-3xl leading-none text-primary">{language.ui.product}</p>
-          <p className="mt-1 text-xs text-muted-foreground">Private check-in · nothing is saved</p>
+          <p className="mt-1 text-xs text-muted-foreground">{language.ui.onDeviceLine}</p>
         </div>
-        <Button type="button" variant="destructive" className="h-10 rounded-full px-4" onClick={wipe}>
-          {language.ui.erase}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 rounded-full px-4"
+            aria-expanded={showPrivacy}
+            onClick={() => setShowPrivacy((open) => !open)}
+          >
+            {language.ui.privacyButton}
+          </Button>
+          <Button type="button" variant="destructive" className="h-10 rounded-full px-4" onClick={wipe}>
+            {language.ui.erase}
+          </Button>
+        </div>
       </header>
 
       <main className="flex-1 overflow-y-auto px-5 pb-6">
+        {showPrivacy && started ? (
+          <div className="mb-6">
+            <PrivacyPanel />
+          </div>
+        ) : null}
         {started ? (
           <div className="flex flex-col gap-6">
-            <ProgressSteps phase={phase} />
+            <ProgressSteps phase={phase} notes={notes} />
             {urgentKind !== "none" ? <UrgentPanel kind={urgentKind} /> : null}
-            {messages.length > 0 ? (
-              <Transcript messages={messages} />
-            ) : error ? null : (
-              <p className="text-muted-foreground">{language.ui.preparing}</p>
-            )}
+            {messages.length > 0 ? <Transcript messages={messages} /> : null}
             {summary ? <SummaryCard summary={summary} copied={copied} onCopy={() => void copySummary()} /> : null}
-            {!messages.length && error ? (
-              <Button type="button" variant="outline" className="h-10 self-start rounded-full px-4" onClick={begin}>
-                {language.ui.tryAgain}
-              </Button>
-            ) : null}
             <div ref={endRef} />
           </div>
         ) : (
@@ -427,9 +391,7 @@ export function Intake() {
           onFinish={() => submitText(language.ui.finishUtterance)}
           onHearAgain={() => {
             if (!hearAgain) return;
-            unlockAudio();
-            const controller = beginRequest();
-            void speak(hearAgain, generation.current, controller.signal);
+            void speak(hearAgain, generation.current);
           }}
         />
       ) : (
@@ -437,7 +399,6 @@ export function Intake() {
           {language.ui.footer}
         </p>
       )}
-      <audio ref={audioRef} playsInline preload="auto" className="hidden" />
     </div>
   );
 }

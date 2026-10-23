@@ -40,3 +40,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Copied from @huggingface/transformers at npm install. Not user data.
+/public/onnx/

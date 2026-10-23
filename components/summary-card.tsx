@@ -1,16 +1,7 @@
 import { language } from "@/lib/language";
+import { summaryRows } from "@/lib/summary";
 import type { CheckInSummary } from "@/lib/types";
 import { Button } from "@/components/ui/button";
-
-const rows: Array<[keyof CheckInSummary, string]> = [
-  ["wellbeing", "Wellbeing"],
-  ["sleep", "Sleep"],
-  ["nourishment", "Food and water"],
-  ["symptoms", "Pain or symptoms"],
-  ["pregnancy", "Pregnancy"],
-  ["menstrual", "Menstrual health"],
-  ["urgentConcerns", "Urgent concerns"],
-];
 
 export function SummaryCard({
   summary,
@@ -33,7 +24,7 @@ export function SummaryCard({
         </Button>
       </div>
       <dl className="mt-4 space-y-3 text-sm leading-6">
-        {rows.map(([key, label]) => (
+        {summaryRows.map(([key, label]) => (
           <div key={key}>
             <dt className="text-muted-foreground">{label}</dt>
             <dd>{summary[key]}</dd>

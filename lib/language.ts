@@ -3,9 +3,9 @@
  *
  * English is the only profile wired up today. To bring in Pashto or Dari,
  * add another object that satisfies `LanguageProfile` and export it as
- * `language`. See the Pashto roadmap in the README before doing that:
- * speech-to-text language, right-to-left layout, a reviewed female voice,
- * and translated safety phrases all have to move together.
+ * `language`. Speech model, right-to-left layout, a reviewed offline female
+ * voice, the system prompt, and the safety phrases all have to move together.
+ * Model ids point at public weight files. They are not a place to send her words.
  */
 export type LanguageProfile = {
   id: string;
@@ -14,17 +14,31 @@ export type LanguageProfile = {
   label: string;
   stt: {
     model: string;
+    dtype: string;
+    device: "wasm" | "webgpu";
     language: string;
-    prompt: string;
+    task: "transcribe" | "translate";
   };
   llm: {
     model: string;
+    dtype: string;
+    device: "wasm" | "webgpu";
+    maxNewTokens: number;
   };
   tts: {
-    model: string;
-    voice: string;
-    speed: number;
-    instructions: string;
+    engine: "speech-synthesis";
+    rate: number;
+    pitch: number;
+    preferLocal: boolean;
+    femaleNameHints: string[];
+  };
+  remedies: {
+    general: string;
+    rest: string;
+    head: string;
+    throat: string;
+    stomach: string;
+    fever: string;
   };
   ui: {
     product: string;
@@ -38,6 +52,14 @@ export type LanguageProfile = {
     finish: string;
     finishUtterance: string;
     cleared: string;
+    greeting: string;
+    askWellbeing: string;
+    askConcern: string;
+    askMore: string;
+    thanks: string;
+    skipThanks: string;
+    clinicianLine: string;
+    closing: string;
     welcomeKicker: string;
     welcomeTitle: string;
     welcomeBody: string;
@@ -49,6 +71,13 @@ export type LanguageProfile = {
     summaryTitle: string;
     summaryNote: string;
     preparing: string;
+    onDeviceLine: string;
+    privacyTitle: string;
+    privacyStoredTitle: string;
+    privacyStored: string[];
+    privacyNotTitle: string;
+    privacyNot: string[];
+    privacyButton: string;
     footer: string;
     copy: string;
     copied: string;
@@ -62,20 +91,18 @@ export type LanguageProfile = {
       transcribing: string;
       thinking: string;
       speaking: string;
+      preparing: string;
       summary: string;
     };
     errors: {
-      missingKey: string;
-      rateLimit: string;
+      modelFailed: string;
       generic: string;
-      misheard: string;
       emptyAudio: string;
       micDenied: string;
       micMissing: string;
       tooLong: string;
       tooQuiet: string;
       voiceUnavailable: string;
-      tapToHear: string;
     };
   };
   safety: {
@@ -83,6 +110,9 @@ export type LanguageProfile = {
     selfHarmSummary: string;
     selfHarmClinician: string;
     medicalAdvice: string;
+    medicalUrgentSummary: string;
+    firstAidScript: string;
+    firstAidSummary: string;
     urgentTitle: string;
     urgentSelfHarmBody: string;
     urgentMedicalBody: string;
@@ -100,20 +130,48 @@ export const language: LanguageProfile = {
   direction: "ltr",
   label: "English",
   stt: {
-    model: "gpt-4o-mini-transcribe",
+    model: "onnx-community/whisper-tiny",
+    dtype: "q8",
+    device: "wasm",
     language: "en",
-    prompt:
-      "A woman speaking quietly about her health: sleep, food, water, pain, pregnancy, monthly bleeding, fever, breathing.",
+    task: "transcribe",
   },
   llm: {
-    model: "gpt-4o-mini",
+    model: "onnx-community/SmolLM2-135M-Instruct-ONNX",
+    dtype: "q8",
+    device: "wasm",
+    maxNewTokens: 40,
   },
   tts: {
-    model: "gpt-4o-mini-tts",
-    voice: "shimmer",
-    speed: 0.94,
-    instructions:
-      "Speak as a gentle woman, softly and a little slowly. Warm, calm, and respectful. Never bright, never jokey, never alarmed. Use a quiet close voice, as if you are sitting beside her and do not want anyone else to overhear.",
+    engine: "speech-synthesis",
+    rate: 0.9,
+    pitch: 1.08,
+    preferLocal: true,
+    femaleNameHints: [
+      "female",
+      "woman",
+      "samantha",
+      "victoria",
+      "zira",
+      "susan",
+      "karen",
+      "moira",
+      "fiona",
+      "tessa",
+      "serena",
+      "kate",
+      "linda",
+    ],
+  },
+  remedies: {
+    general: "A quiet rest, a warm cover, and small sips of clean water are a gentle comfort.",
+    rest: "Rest in a quiet place, and take small sips of clean water if you can.",
+    head: "Rest in a quiet, dim room, and take small sips of clean water. I cannot give a medicine for this.",
+    throat:
+      "A warm drink can soothe the throat. If you are an adult and honey suits you, a little honey in that drink is a simple comfort. I cannot give a medicine for this.",
+    stomach:
+      "Small sips of clean water, and rest, are a gentle comfort for an upset stomach. I cannot give a medicine for this.",
+    fever: "Rest, small sips of water, and a light cover are a gentle comfort when the body feels hot.",
   },
   ui: {
     product: "Aram",
@@ -127,85 +185,110 @@ export const language: LanguageProfile = {
     finish: "End and summarize",
     finishUtterance: "I would like to stop and have the summary for a doctor.",
     cleared: "This tab is clear.",
+    greeting:
+      "Assalaam-o-alaikum. I am Noor, a voice in this private screen, not a person and not a doctor. You may skip anything.",
+    askWellbeing: "If you are willing, how are you feeling today?",
+    askConcern: "What is troubling you most, if you would like to say?",
+    askMore: "Is there anything else you want me to hear?",
+    thanks: "Thank you for telling me.",
+    skipThanks: "Thank you. We can leave that.",
+    clinicianLine: "Please seek a clinician when you can.",
+    closing:
+      "Thank you for trusting me with this. You may show the lines on the screen to a clinician if you wish. Khuda hafiz.",
     welcomeKicker: "For you, in confidence",
     welcomeTitle: "Speak softly. I will listen, one thing at a time.",
     welcomeBody:
-      "Noor will walk with you through a short check-in. She is a computer voice, not a woman on the phone, and she is not a doctor. She cannot tell you what is wrong. At the end she can give you a few lines to show a clinician.",
+      "Noor will walk with you through a short check-in. She is a computer voice on this device, not a woman on the phone, and she is not a doctor. She can offer a simple comfort or basic first aid. She cannot tell you what is wrong.",
     welcomePoints: [
-      "No account, no cookies, and no record kept on a server.",
+      "No account, no cookies, and no server that receives your voice or your words.",
       "Your words live in this tab’s memory, and nowhere else.",
-      "Erase everything, or close the tab, and they are gone.",
+      "The first visit downloads public model files, about 140 megabytes to reply and about 40 more if you use the microphone. They are the same files for every person. Your words are not in that download.",
+      "Erase everything, or close the tab, and the conversation is gone.",
     ],
     topicsLabel: "She will ask, only one thing at a time, about",
     topics: [
-      "how you feel today",
-      "sleep",
-      "food and water",
-      "pain or other symptoms",
-      "pregnancy, which you may skip",
-      "monthly bleeding, which you may skip",
-      "heavy bleeding, severe pain, fever, trouble breathing, or thoughts of hurting yourself",
+      "how you are feeling",
+      "what is troubling you, in your own words",
+      "a simple comfort at home, if you want one",
+      "basic first aid if there is bleeding, trouble breathing, or a collapse",
     ],
     welcomeFoot:
-      "English today. Pashto and Dari will come later. If someone is nearby, you may type instead of speaking.",
+      "English today. Pashto and Dari will come later, after women have heard the voice. She will not press you about private matters, and she will not examine you. If someone is nearby, you may type instead of speaking.",
     youLabel: "You",
     summaryTitle: "For a clinician",
     summaryNote: "Not a diagnosis. Read it together, then erase it when you are done.",
-    preparing: "Noor is preparing her first question.",
-    footer: "Health-a-thon 2026 prototype. Not a medical device, and not a person on the line.",
+    preparing: "Noor is coming onto this device. Only public model files are downloading. Your words stay here.",
+    onDeviceLine: "On this device · nothing is sent away",
+    privacyTitle: "Privacy",
+    privacyStoredTitle: "What stays on this device",
+    privacyStored: [
+      "The words of this conversation, in this tab’s memory only, until you tap Erase everything or leave.",
+      "Public model files, the same files for every person, in the browser cache so Noor can run again without downloading them. They do not contain your words.",
+    ],
+    privacyNotTitle: "What does not happen",
+    privacyNot: [
+      "Your voice and your words are not sent to a server, a clinic, or a model company.",
+      "No account, no cookies, and no saved conversation in browser storage.",
+      "No analytics, and no outside fonts or scripts.",
+      "Speech uses an offline voice already on this device. If this device has no offline voice, the words stay on the screen. A network voice is not used.",
+      "Erase everything drops the conversation at once. The cached model files remain, because they are not your story.",
+      "If you tap Copy for a doctor, the words go to the clipboard, which this app does not clear for you.",
+    ],
+    privacyButton: "Privacy",
+    footer: "Health-a-thon 2026 prototype. On this device. Not a medical device, and not a person on the line.",
     copy: "Copy for a doctor",
     copied: "Copied. It stays on your clipboard until you clear it. This app does not keep a copy.",
     hearAgain: "Hear that again",
     tryAgain: "Try again",
     typePlaceholder: "Or type here, if speaking is hard",
     steps: [
-      { id: "mood", label: "Feeling" },
-      { id: "sleep", label: "Sleep" },
-      { id: "nourishment", label: "Food and water" },
-      { id: "symptoms", label: "Symptoms" },
-      { id: "pregnancy", label: "Pregnancy" },
-      { id: "menstrual", label: "Monthly bleeding" },
-      { id: "red_flags", label: "Urgent signs" },
+      { id: "wellbeing", label: "Feeling" },
+      { id: "concern", label: "Trouble" },
+      { id: "care", label: "Comfort" },
+      { id: "first_aid", label: "First aid" },
       { id: "summary", label: "Summary" },
     ],
     status: {
       idle: "Tap the microphone, or type if you prefer.",
       listening: "Listening. Tap the microphone again when you finish.",
       transcribing: "Writing your words on this screen only.",
-      thinking: "Noor is thinking.",
+      thinking: "Noor is thinking, on this device.",
       speaking: "Noor is speaking.",
+      preparing: "Noor is coming onto this device. Only public model files are downloading. Your words stay here.",
       summary: "You can add anything that was missed, or erase this when you are done.",
     },
     errors: {
-      missingKey:
-        "This check-in is not connected yet. The person who set it up needs to add an OpenAI key.",
-      rateLimit: "Please wait a moment, then try again.",
-      generic: "Something went quiet on the way. Please try again.",
-      misheard: "I am sorry, I missed that. Please say it once more, in a few words.",
+      modelFailed: "Noor answered with her prepared words. Nothing was sent away.",
+      generic: "Something went quiet on this device. Please try again.",
       emptyAudio: "I could not hear words. Please try again, or type.",
-      micDenied:
-        "The microphone is not available. You can type instead. That is just as good.",
+      micDenied: "The microphone is not available. You can type instead. That is just as good.",
       micMissing: "This browser cannot use the microphone. You can type instead.",
       tooLong: "That was a little long. Please say it more briefly, or type.",
       tooQuiet: "I did not catch any sound. Please try again, or type.",
-      voiceUnavailable: "I could not speak just now. The words are still on the screen.",
-      tapToHear: "Tap to hear Noor, if the sound did not play.",
+      voiceUnavailable:
+        "This device has no offline voice. The words are on the screen. Nothing was sent away to speak them.",
     },
   },
   safety: {
     selfHarmSpoken:
-      "Thank you for telling me. Please get help from a person right now. Call 102, or ask someone you trust to take you to a clinic. If you might hurt yourself, please do not stay alone. I cannot see you, and I cannot send help. I will stop the questions here. You matter.",
+      "Thank you for telling me. Please get help from a person right now. Call 102, or ask someone you trust to take you to a clinic. If you might hurt yourself, please do not stay alone. I cannot see you, and I cannot send help. I will stop the questions here. You matter. Khuda hafiz.",
     selfHarmSummary:
       "She indicated thoughts of harming herself. She was asked to reach a person, a clinic, or an ambulance immediately. Details were not repeated here.",
     selfHarmClinician:
       "This is not a diagnosis. During a private check-in she indicated thoughts of harming herself. The assistant stopped the questions and advised her to get in-person help immediately. Graphic detail was deliberately left out. Please assess her safety in person.",
     medicalAdvice:
-      "Please seek urgent care today, with a clinic, a midwife, or an ambulance on 102. I cannot tell you what is wrong.",
+      "Please seek a clinician when you can. If you are very unwell, a clinic, a midwife, or an ambulance on 102 can help today. I cannot tell you what is wrong.",
+    medicalUrgentSummary:
+      "She described an urgent concern. She was asked to seek a clinician when she can. This is not a diagnosis.",
+    firstAidScript:
+      "If blood is pouring, press a clean cloth on it and keep holding. Do that before anything else. If the throat is blocked, cough if you can, and call someone near you. Look to see if the chest is rising. If breathing has stopped, shout for help at once. Keep her warm, and keep pressing if the bleeding is heavy. If she is confused or will not wake, stay beside her and do not shake her. Uncover only enough to see a wound, then cover her so she does not get cold. Please seek a clinician when you can.",
+    firstAidSummary:
+      "Basic first aid was spoken in the XABCDE order, in plain words: bleeding, airway, breathing, circulation, disability, and exposure. She was asked to seek a clinician.",
     urgentTitle: "Please reach a person now",
     urgentSelfHarmBody:
       "If you might hurt yourself, you should not be alone. This screen cannot send help, and it forgets these words when you leave or tap Erase everything.",
     urgentMedicalBody:
-      "What you described should be seen by a clinician today. This screen cannot examine you, and it cannot say what is wrong.",
+      "What you described should be seen by a clinician when you can, and today if you are very unwell. This screen cannot examine you, and it cannot say what is wrong.",
     ambulanceLabel: "Ambulance",
     ambulanceNumber: "102",
     helplineLabel: "Awaaz helpline",

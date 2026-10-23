@@ -6,11 +6,9 @@ import { formatSummary } from "./summary.ts";
 test("the clinician summary says it is not a diagnosis", () => {
   const text = formatSummary({
     wellbeing: "Low",
-    sleep: "Broken",
-    nourishment: "Little water",
-    symptoms: "Back pain",
-    pregnancy: "Skipped",
-    menstrual: "Skipped",
+    concern: "Back pain",
+    comfort: "Rest and water",
+    firstAid: "Not discussed",
     urgentConcerns: "None she mentioned",
     forClinician: "This is not a diagnosis. She reports back pain.",
   });

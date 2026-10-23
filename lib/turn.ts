@@ -13,24 +13,13 @@ const summarySchema = {
   additionalProperties: false,
   properties: {
     wellbeing: { type: "string" },
-    sleep: { type: "string" },
-    nourishment: { type: "string" },
-    symptoms: { type: "string" },
-    pregnancy: { type: "string" },
-    menstrual: { type: "string" },
+    concern: { type: "string" },
+    comfort: { type: "string" },
+    firstAid: { type: "string" },
     urgentConcerns: { type: "string" },
     forClinician: { type: "string" },
   },
-  required: [
-    "wellbeing",
-    "sleep",
-    "nourishment",
-    "symptoms",
-    "pregnancy",
-    "menstrual",
-    "urgentConcerns",
-    "forClinician",
-  ],
+  required: ["wellbeing", "concern", "comfort", "firstAid", "urgentConcerns", "forClinician"],
 } as const;
 
 export const turnResponseFormat = {
@@ -43,7 +32,7 @@ export const turnResponseFormat = {
       additionalProperties: false,
       properties: {
         reply: { type: "string" },
-        phase: { type: "string", enum: ["mood", "sleep", "nourishment", "symptoms", "pregnancy", "menstrual", "red_flags", "summary", "urgent_stop"] },
+        phase: { type: "string", enum: ["wellbeing", "concern", "care", "first_aid", "summary", "urgent_stop"] },
         urgent: { type: "boolean" },
         urgentKind: { type: "string", enum: ["none", "medical", "self_harm"] },
         summary: { anyOf: [summarySchema, { type: "null" }] },
@@ -64,32 +53,19 @@ function parseSummary(value: unknown): CheckInSummary | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   const wellbeing = field(record.wellbeing, limits.summaryFieldChars);
-  const sleep = field(record.sleep, limits.summaryFieldChars);
-  const nourishment = field(record.nourishment, limits.summaryFieldChars);
-  const symptoms = field(record.symptoms, limits.summaryFieldChars);
-  const pregnancy = field(record.pregnancy, limits.summaryFieldChars);
-  const menstrual = field(record.menstrual, limits.summaryFieldChars);
+  const concern = field(record.concern, limits.summaryFieldChars);
+  const comfort = field(record.comfort, limits.summaryFieldChars);
+  const firstAid = field(record.firstAid, limits.summaryFieldChars);
   const urgentConcerns = field(record.urgentConcerns, limits.summaryFieldChars);
   const forClinician = field(record.forClinician, limits.clinicianChars);
-  if (
-    !wellbeing ||
-    !sleep ||
-    !nourishment ||
-    !symptoms ||
-    !pregnancy ||
-    !menstrual ||
-    !urgentConcerns ||
-    !forClinician
-  ) {
+  if (!wellbeing || !concern || !comfort || !firstAid || !urgentConcerns || !forClinician) {
     return null;
   }
   return {
     wellbeing,
-    sleep,
-    nourishment,
-    symptoms,
-    pregnancy,
-    menstrual,
+    concern,
+    comfort,
+    firstAid,
     urgentConcerns,
     forClinician,
   };
