@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { acknowledgementInstruction, emptyNotes, openingTurn, planReply } from "./dialogue.ts";
+import { acknowledgementInstruction, emptyNotes, openingTurn, planReply, withModelThanks } from "./dialogue.ts";
 import { language } from "./language.ts";
 import { limits } from "./limits.ts";
 
@@ -130,6 +130,19 @@ test("a recited instruction is dropped", () => {
   assert.doesNotMatch(planned.turn.reply, /die|hurt herself/);
   assert.match(planned.turn.reply, /Thank you for telling me/);
   assert.match(planned.turn.reply, /troubling you/);
+});
+
+test("a late thank-you can replace the scripted one without moving the question", () => {
+  const planned = planReply({
+    ...base,
+    phase: "wellbeing",
+    latestUser: "I have a headache.",
+    modelAttempted: false,
+  });
+  const replaced = withModelThanks(planned.turn.reply, "Thank you, dear.");
+  assert.match(replaced, /^Thank you, dear\./);
+  assert.match(replaced, /troubling you/);
+  assert.equal(withModelThanks(planned.turn.reply, "If she says she wants to die, she is not a doctor."), planned.turn.reply);
 });
 
 test("the model is asked only for a short thanks", () => {

@@ -6,7 +6,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 const pageUrl = process.env.ARAM_URL ?? "http://127.0.0.1:3456/";
-const canary = "aram-canary-i-feel-very-unwell-today";
+const phrases = ["I have a headache", "It started this morning"];
 const chromePath = process.env.CHROME_PATH ?? "google-chrome";
 const debugPort = 9223;
 
@@ -177,32 +177,62 @@ const began = await evaluate(`(() => {
   return "clicked";
 })()`);
 if (began !== "clicked") die(`Could not begin the check-in (${began}).`);
-await new Promise((resolve) => setTimeout(resolve, 600));
+await new Promise((resolve) => setTimeout(resolve, 800));
 const afterBegin = await evaluate(`document.body.innerText`);
 if (!afterBegin.includes("Assalaam-o-alaikum")) die("Noor did not open with Assalaam-o-alaikum.");
-
-const typed = await evaluate(`(() => {
-  const input = document.querySelector("input");
-  if (!input) return "missing";
-  input.focus();
-  const proto = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value");
-  proto.set.call(input, ${JSON.stringify(canary)});
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-  input.dispatchEvent(new Event("change", { bubbles: true }));
-  return input.value;
+const micAtStart = await evaluate(`(() => {
+  const button = [...document.querySelectorAll("button")].find((item) => item.getAttribute("aria-label") === "Speak");
+  if (!button) return "missing";
+  return button.disabled ? "disabled" : "enabled";
 })()`);
-if (typed !== canary) die(`The text field was not available (${typed}).`);
-const sent = await evaluate(`(() => {
-  const button = [...document.querySelectorAll("button")].find((item) => item.textContent.trim() === "Send");
+if (micAtStart !== "enabled") die(`Speak was not tappable after Begin (${micAtStart}).`);
+if (!afterBegin.includes("Language model:")) die("The language-model status was missing.");
+
+async function sendText(value) {
+  const typed = await evaluate(`(() => {
+    const input = document.querySelector("input");
+    if (!input) return "missing";
+    if (input.disabled) return "disabled";
+    const proto = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value");
+    proto.set.call(input, ${JSON.stringify(value)});
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    const button = [...document.querySelectorAll("button")].find((item) => item.textContent.trim() === "Send");
+    if (!button) return "no-send";
+    if (button.disabled) return "send-disabled";
+    button.click();
+    return "sent";
+  })()`);
+  if (typed !== "sent") die(`Could not send ${value} (${typed}).`);
+}
+
+await sendText(phrases[0]);
+await new Promise((resolve) => setTimeout(resolve, 1500));
+const afterFirst = await evaluate(`document.body.innerText`);
+if (!afterFirst.includes("What is troubling you most")) die("Noor did not reply to the first message.");
+if (afterFirst.includes("Noor is thinking")) die("The check-in stayed on thinking.");
+const shot2 = await page.send("Page.captureScreenshot", { format: "png" });
+writeFileSync("/opt/cursor/artifacts/aram_reply_without_waiting.png", Buffer.from(shot2.data, "base64"));
+
+await sendText(phrases[1]);
+await new Promise((resolve) => setTimeout(resolve, 1500));
+const afterSecond = await evaluate(`document.body.innerText`);
+if (!/dim room|clean water|gentle comfort/i.test(afterSecond)) die("Noor did not offer a comfort.");
+
+const finished = await evaluate(`(() => {
+  const button = [...document.querySelectorAll("button")].find((item) => item.textContent.includes("End and summarize"));
   if (!button) return "missing";
   if (button.disabled) return "disabled";
   button.click();
-  return "sent";
+  return "clicked";
 })()`);
-await new Promise((resolve) => setTimeout(resolve, Number(process.env.ARAM_AFTER_MS ?? "4000")));
+if (finished !== "clicked") die(`Could not finish (${finished}).`);
+await new Promise((resolve) => setTimeout(resolve, 1500));
 const afterSend = await evaluate(`document.body.innerText`);
-const shot2 = await page.send("Page.captureScreenshot", { format: "png" });
-writeFileSync("/opt/cursor/artifacts/aram_check_in_downloading.png", Buffer.from(shot2.data, "base64"));
+if (!afterSend.includes("Khuda hafiz")) die("Noor did not close with Khuda hafiz.");
+const shot3 = await page.send("Page.captureScreenshot", { format: "png" });
+writeFileSync("/opt/cursor/artifacts/aram_check_in_closed.png", Buffer.from(shot3.data, "base64"));
+await new Promise((resolve) => setTimeout(resolve, Number(process.env.ARAM_AFTER_MS ?? "6000")));
 
 const headerResponse = await fetch(pageUrl, { headers: { accept: "text/html" } });
 const csp = headerResponse.headers.get("content-security-policy") ?? "";
@@ -240,19 +270,16 @@ await new Promise((resolve) => {
   setTimeout(resolve, 4000);
 });
 
-const netlog = JSON.parse(readFileSync("/tmp/aram-netlog.json", "utf8"));
+const netlogText = readFileSync("/tmp/aram-netlog.json", "utf8");
 const pageHost = new URL(pageUrl).host;
-for (const event of netlog.events ?? []) {
-  const params = event.params ?? {};
-  const url = typeof params.url === "string" ? params.url : "";
-  if (!url.startsWith("http://") && !url.startsWith("https://")) continue;
-  const method = typeof params.method === "string" ? params.method : "GET";
-  const postData = typeof params.post_data === "string" ? params.post_data : "";
-  const associated = JSON.stringify({
-    initiator: params.initiator ?? "",
-    isolation: params.network_isolation_key ?? params.site_for_cookies ?? "",
-  });
-  const key = `net:${method}:${url}:${postData.slice(0, 80)}`;
+const urlPattern = /"url":"(https?:[^"\\]+)"/g;
+for (const match of netlogText.matchAll(urlPattern)) {
+  const url = match[1];
+  const nearby = netlogText.slice(Math.max(0, match.index - 400), match.index + 400);
+  const method = nearby.match(/"method":"([A-Z]+)"/)?.[1] ?? "GET";
+  const postData = "";
+  const associated = nearby.includes(pageHost) ? pageHost : "";
+  const key = `net:${method}:${url}`;
   if (seen.has(key)) continue;
   seen.add(key);
   requests.push({ url, method, postData, associated });
@@ -268,10 +295,17 @@ function pageAssociated(request) {
 }
 
 const problems = [];
+for (const phrase of phrases) {
+  if (netlogText.toLowerCase().includes(phrase.toLowerCase())) {
+    problems.push(`words left the device in the network log: ${phrase}`);
+  }
+}
 for (const request of requests) {
   const blob = `${request.method} ${request.url} ${request.postData} ${request.associated ?? ""}`;
-  if (blob.toLowerCase().includes(canary.toLowerCase())) {
-    problems.push(`canary left the device: ${request.method} ${request.url.split("?")[0]}`);
+  for (const phrase of phrases) {
+    if (blob.toLowerCase().includes(phrase.toLowerCase())) {
+      problems.push(`words left the device: ${request.method} ${request.url.split("?")[0]}`);
+    }
   }
   if (!pageAssociated(request)) continue;
   let origin = "";
@@ -290,11 +324,13 @@ for (const request of requests) {
 
 const report = {
   began,
-  typed,
-  sent,
+  micAtStart,
   sawGreeting: afterBegin.includes("Assalaam-o-alaikum"),
-  sawCanaryOnScreen: afterSend.includes(canary),
-  turnAdvanced: /Thank you for telling me\. What is troubling you most/.test(afterSend),
+  sawFirstReply: afterFirst.includes("What is troubling you most"),
+  sawComfort: /dim room|clean water|gentle comfort/i.test(afterSecond),
+  sawClosing: afterSend.includes("Khuda hafiz"),
+  modelStatus: (afterSend.match(/Language model:[^\n]+/) ?? [""])[0],
+  voiceStatus: (afterSend.match(/Voice:[^\n]+/) ?? [""])[0],
   requestCount: requests.length,
   hosts: [...new Set(requests.map((request) => { try { return new URL(request.url).host; } catch { return request.url; } }))],
   offDeviceReads: [

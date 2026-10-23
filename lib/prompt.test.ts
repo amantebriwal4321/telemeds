@@ -28,7 +28,8 @@ test("the english prompt is a deferential on-device companion", () => {
     assert.match(prompt, new RegExp(phrase, "i"));
   }
   assert.match(startInstruction(), /Assalaam-o-alaikum/);
-  assert.equal(language.tts.engine, "speech-synthesis");
+  assert.equal(language.tts.engine, "kokoro");
+  assert.equal(language.tts.voice, "af_heart");
   assert.equal(language.tts.preferLocal, true);
   assert.equal(language.stt.language, "en");
   assert.equal(language.stt.device, "wasm");

@@ -11,14 +11,16 @@ import { UrgentPanel } from "@/components/urgent-panel";
 import { Welcome } from "@/components/welcome";
 import { Button } from "@/components/ui/button";
 import { blobToMono16k } from "@/lib/capture";
-import { emptyNotes, openingTurn, planReply, type Notes } from "@/lib/dialogue";
+import { emptyNotes, openingTurn, planReply, withModelThanks, type Notes } from "@/lib/dialogue";
 import { clearSensitive, installEgressGuard, noteSensitive } from "@/lib/egress";
 import { language } from "@/lib/language";
 import { limits } from "@/lib/limits";
+import { subscribeVoice } from "@/lib/neural-voice";
 import { preloadLanguageModel, prepareEngine } from "@/lib/on-device";
 import { mentionsMedicalRedFlag, mentionsSelfHarm, needsHandsOnFirstAid } from "@/lib/safety";
-import { speakAloud } from "@/lib/speech";
+import { speakAloud, startVoiceDownload, unlockAudio } from "@/lib/speech";
 import { formatSummary } from "@/lib/summary";
+import { thanksWithin } from "@/lib/thanks";
 import type { CheckInSummary, Phase, Turn, UrgentKind } from "@/lib/types";
 
 type Status = "idle" | "listening" | "transcribing" | "thinking" | "speaking" | "preparing";
@@ -32,12 +34,14 @@ export function Intake() {
   const [summary, setSummary] = useState<CheckInSummary | null>(null);
   const [urgentKind, setUrgentKind] = useState<UrgentKind>("none");
   const [status, setStatus] = useState<Status>("idle");
-  const [progress, setProgress] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [hearAgain, setHearAgain] = useState<string | null>(null);
   const [showPrivacy, setShowPrivacy] = useState(false);
+  const [modelStatus, setModelStatus] = useState(language.ui.modelIdle);
+  const [voiceStatus, setVoiceStatus] = useState(language.ui.voiceIdle);
+  const [speechStatus, setSpeechStatus] = useState(language.ui.speechIdle);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -49,7 +53,6 @@ export function Intake() {
   const phaseRef = useRef<Phase | null>(null);
   const notesRef = useRef<Notes>(emptyNotes());
   const messagesRef = useRef<Turn[]>([]);
-  const bootingRef = useRef(false);
   const wipeRef = useRef<() => void>(() => {});
   const releaseRef = useRef<() => void>(() => {});
 
@@ -59,6 +62,12 @@ export function Intake() {
 
   useEffect(() => {
     window.speechSynthesis?.getVoices();
+    return subscribeVoice((state) => {
+      setVoiceStatus(state.phase === "ready" ? language.ui.voiceReady : state.label);
+    });
+  }, []);
+
+  useEffect(() => {
     const onHide = () => wipeRef.current();
     const onShow = (event: PageTransitionEvent) => {
       if (event.persisted) wipeRef.current();
@@ -92,7 +101,6 @@ export function Intake() {
     abortRef.current?.abort();
     releaseMedia();
     clearSensitive();
-    bootingRef.current = false;
     setStarted(false);
     setMessages([]);
     setPhase(null);
@@ -129,8 +137,10 @@ export function Intake() {
     setHearAgain(text);
     const result = await speakAloud(text, controller.signal);
     if (gen !== generation.current || abortRef.current !== controller) return;
+    if (result === "device") setVoiceStatus(language.ui.voiceDevice);
     if (result === "silent") setError(language.ui.errors.voiceUnavailable);
-    setStatus(bootingRef.current ? "preparing" : "idle");
+    else setError((current) => (current === language.ui.errors.voiceUnavailable ? null : current));
+    setStatus("idle");
   }
 
   function applyPlan(text: string, modelAcknowledgement: string | null, modelAttempted: boolean, gen: number) {
@@ -151,8 +161,21 @@ export function Intake() {
     setPhase(planned.turn.phase);
     setSummary(planned.turn.summary);
     setUrgentKind(planned.turn.urgent ? planned.turn.urgentKind : "none");
-    if (planned.prepared) setError(language.ui.errors.modelFailed);
     void speak(planned.turn.reply, gen);
+  }
+
+  function patchThanks(modelText: string, gen: number) {
+    if (gen !== generation.current) return;
+    const current = messagesRef.current;
+    const index = current.length - 1;
+    const last = current[index];
+    if (!last || last.role !== "assistant") return;
+    const nextReply = withModelThanks(last.content, modelText);
+    if (nextReply === last.content) return;
+    const next = current.slice();
+    next[index] = { role: "assistant", content: nextReply };
+    messagesRef.current = next;
+    setMessages(next);
   }
 
   async function respond(text: string) {
@@ -165,33 +188,23 @@ export function Intake() {
       mentionsMedicalRedFlag(latest) ||
       latest === language.ui.skipUtterance ||
       latest === language.ui.finishUtterance;
-    if (immediate) {
-      applyPlan(latest, null, false, gen);
-      return;
-    }
-    setStatus("thinking");
-    setError(null);
     setCopied(false);
-    try {
-      installEgressGuard();
-      const engine = await prepareEngine((update) => {
-        if (gen === generation.current) setProgress(update.label);
-      });
-      if (gen !== generation.current) return;
-      const modelText = await engine.generate(latest);
-      if (gen !== generation.current) return;
-      applyPlan(latest, modelText, true, gen);
-    } catch {
-      if (gen !== generation.current) return;
-      applyPlan(latest, null, true, gen);
-    }
+    applyPlan(latest, null, false, gen);
+    if (immediate) return;
+    const modelText = await thanksWithin(
+      prepareEngine((update) => {
+        if (gen === generation.current) setModelStatus(update.label);
+      }).then((engine) => engine.generate(latest)),
+    );
+    if (!modelText) return;
+    patchThanks(modelText, gen);
   }
 
   function begin() {
+    unlockAudio();
     installEgressGuard();
     const turn = openingTurn();
     const gen = generation.current;
-    bootingRef.current = true;
     const opening = [{ role: "assistant" as const, content: turn.reply }];
     messagesRef.current = opening;
     phaseRef.current = turn.phase;
@@ -206,16 +219,13 @@ export function Intake() {
     setError(null);
     void speak(turn.reply, gen);
     void preloadLanguageModel((update) => {
-      if (generation.current === gen) setProgress(update.label);
-    }).then(() => {
-      if (generation.current !== gen) return;
-      bootingRef.current = false;
-      setProgress(null);
-      setStatus((current) => (current === "preparing" ? "idle" : current));
+      if (generation.current === gen) setModelStatus(update.label);
     });
+    void startVoiceDownload();
   }
 
   function submitText(text: string) {
+    unlockAudio();
     const trimmed = text.trim();
     if (!trimmed || status === "listening" || status === "transcribing" || status === "thinking") return;
     setDraft("");
@@ -242,16 +252,20 @@ export function Intake() {
       return;
     }
     setStatus("transcribing");
+    setSpeechStatus("Speech model: downloading");
     setError(null);
     try {
       installEgressGuard();
       const samples = await blobToMono16k(blob);
       const engine = await prepareEngine((update) => {
-        if (gen === generation.current) setProgress(update.label);
+        if (gen === generation.current && update.label.startsWith("Listening")) {
+          setSpeechStatus(update.label.replace("Listening model", "Speech model"));
+        }
       });
       if (gen !== generation.current) return;
       const text = await engine.transcribe(samples);
       if (gen !== generation.current) return;
+      setSpeechStatus("Speech model: ready");
       if (!text) {
         setError(language.ui.errors.emptyAudio);
         setStatus("idle");
@@ -260,21 +274,28 @@ export function Intake() {
       const next = [...messagesRef.current, { role: "user" as const, content: text.slice(0, limits.textMessage) }];
       setMessages(next);
       messagesRef.current = next;
+      setStatus("idle");
       await respond(text);
     } catch {
       if (gen !== generation.current) return;
-      setError(language.ui.errors.generic);
+      setSpeechStatus("Speech model: failed");
+      setError(language.ui.errors.speechFailed);
       setStatus("idle");
     }
   }
 
   async function toggleMic() {
-    if (status === "transcribing" || status === "thinking" || status === "preparing") return;
+    if (status === "transcribing") return;
+    unlockAudio();
     if (status === "listening") {
       recorderRef.current?.stop();
       return;
     }
     window.speechSynthesis?.cancel();
+    if (!window.isSecureContext) {
+      setError(language.ui.errors.micInsecure);
+      return;
+    }
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
       setError(language.ui.errors.micMissing);
       return;
@@ -312,8 +333,10 @@ export function Intake() {
       timerRef.current = window.setTimeout(() => {
         if (recorder.state === "recording") recorder.stop();
       }, limits.recordMs);
-    } catch {
-      setError(language.ui.errors.micDenied);
+    } catch (error) {
+      const name = error instanceof DOMException ? error.name : "";
+      if (name === "NotFoundError" || name === "NotReadableError") setError(language.ui.errors.micMissing);
+      else setError(language.ui.errors.micDenied);
       setStatus("idle");
     }
   }
@@ -329,11 +352,14 @@ export function Intake() {
     }
   }
 
-  const blocked = status === "transcribing" || status === "thinking";
   const baseStatus =
     error ??
-    (summary && status === "idle" ? language.ui.status.summary : language.ui.status[status]);
-  const statusText = progress ? `${baseStatus} ${progress}` : baseStatus;
+    (status === "transcribing"
+      ? speechStatus
+      : summary && status === "idle"
+        ? language.ui.status.summary
+        : language.ui.status[status]);
+  const statusText = baseStatus;
 
   return (
     <div className="mx-auto flex h-dvh w-full max-w-lg flex-col">
@@ -381,9 +407,10 @@ export function Intake() {
         <Composer
           status={status}
           draft={draft}
-          blocked={blocked}
           showHearAgain={Boolean(hearAgain)}
           statusText={statusText}
+          modelStatus={modelStatus}
+          voiceStatus={voiceStatus}
           onDraft={setDraft}
           onMic={() => void toggleMic()}
           onSend={() => submitText(draft)}
@@ -391,6 +418,7 @@ export function Intake() {
           onFinish={() => submitText(language.ui.finishUtterance)}
           onHearAgain={() => {
             if (!hearAgain) return;
+            unlockAudio();
             void speak(hearAgain, generation.current);
           }}
         />

@@ -1,13 +1,15 @@
 import { language } from "@/lib/language";
+import { inputDisabled, microphoneDisabled, type ComposerStatus } from "@/lib/composer-state";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 export function Composer({
   status,
   draft,
-  blocked,
   showHearAgain,
   statusText,
+  modelStatus,
+  voiceStatus,
   onDraft,
   onMic,
   onSend,
@@ -15,11 +17,12 @@ export function Composer({
   onFinish,
   onHearAgain,
 }: {
-  status: "idle" | "listening" | "transcribing" | "thinking" | "speaking" | "preparing";
+  status: ComposerStatus;
   draft: string;
-  blocked: boolean;
   showHearAgain: boolean;
   statusText: string;
+  modelStatus: string;
+  voiceStatus: string;
   onDraft: (value: string) => void;
   onMic: () => void;
   onSend: () => void;
@@ -28,16 +31,23 @@ export function Composer({
   onHearAgain: () => void;
 }) {
   const listening = status === "listening";
+  const typingClosed = inputDisabled(status);
   return (
     <div className="border-t border-border bg-background/95 px-5 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur-sm">
       <p className="min-h-5 text-center text-sm text-muted-foreground" aria-live="polite">
         {statusText}
       </p>
+      <p className="mt-1 text-center text-xs text-muted-foreground" data-model-status aria-live="polite">
+        {modelStatus}
+      </p>
+      <p className="text-center text-xs text-muted-foreground" data-voice-status>
+        {voiceStatus}
+      </p>
       <div className="mt-3 flex flex-col items-center">
         <button
           type="button"
           onClick={onMic}
-          disabled={blocked || status === "preparing" || status === "speaking"}
+          disabled={microphoneDisabled(status)}
           aria-pressed={listening}
           aria-label={listening ? "Stop and send what I said" : "Speak"}
           className="relative grid size-24 place-items-center rounded-full bg-primary text-primary-foreground shadow-[0_16px_40px_-18px] shadow-primary outline-none focus-visible:ring-3 focus-visible:ring-ring disabled:opacity-50"
@@ -61,26 +71,26 @@ export function Composer({
           placeholder={language.ui.typePlaceholder}
           aria-label={language.ui.typePlaceholder}
           className="h-12 rounded-full px-4 text-base md:text-base"
-          disabled={listening || status === "transcribing" || status === "thinking"}
+          disabled={typingClosed}
         />
         <Button
           type="submit"
           variant="secondary"
           className="h-12 rounded-full px-4"
-          disabled={listening || status === "transcribing" || status === "thinking" || !draft.trim()}
+          disabled={typingClosed || !draft.trim()}
         >
           {language.ui.send}
         </Button>
       </form>
       <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-        <Button type="button" variant="ghost" className="h-9 rounded-full px-3" onClick={onSkip} disabled={listening || status === "transcribing" || status === "thinking"}>
+        <Button type="button" variant="ghost" className="h-9 rounded-full px-3" onClick={onSkip} disabled={typingClosed}>
           {language.ui.skip}
         </Button>
-        <Button type="button" variant="ghost" className="h-9 rounded-full px-3" onClick={onFinish} disabled={listening || status === "transcribing" || status === "thinking"}>
+        <Button type="button" variant="ghost" className="h-9 rounded-full px-3" onClick={onFinish} disabled={typingClosed}>
           {language.ui.finish}
         </Button>
         {showHearAgain ? (
-          <Button type="button" variant="ghost" className="h-9 rounded-full px-3" onClick={onHearAgain} disabled={listening || status === "transcribing" || status === "thinking"}>
+          <Button type="button" variant="ghost" className="h-9 rounded-full px-3" onClick={onHearAgain} disabled={typingClosed}>
             {language.ui.hearAgain}
           </Button>
         ) : null}

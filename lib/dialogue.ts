@@ -47,6 +47,13 @@ export function acknowledgementInstruction(latestUser: string): string {
   ].join(" ");
 }
 
+export function withModelThanks(reply: string, modelText: string | null): string {
+  const cleaned = cleanAcknowledgement(modelText);
+  const scripted = language.ui.thanks;
+  if (cleaned.prepared || !reply.startsWith(scripted)) return reply;
+  return `${cleaned.text}${reply.slice(scripted.length)}`;
+}
+
 function cleanAcknowledgement(raw: string | null): { text: string; prepared: boolean } {
   const fallback = language.ui.thanks;
   if (!raw) return { text: fallback, prepared: true };
