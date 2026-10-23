@@ -9,11 +9,4 @@ export const limits = {
   summaryFieldChars: 500,
   clinicianChars: 900,
   recordMs: 45_000,
-  rate: {
-    transcribe: { limit: 8, windowMs: 10 * 60 * 1000 },
-    chat: { limit: 20, windowMs: 10 * 60 * 1000 },
-    speak: { limit: 20, windowMs: 10 * 60 * 1000 },
-  },
 } as const;
-
-export type RateBucket = keyof typeof limits.rate;

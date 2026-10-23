@@ -85,7 +85,7 @@ export function parseChatBody(
     value: {
       intent: record.intent,
       messages: record.intent === "start" ? [] : sanitized.messages,
-      fallbackPhase: isPhase(record.phase) ? record.phase : "mood",
+      fallbackPhase: isPhase(record.phase) ? record.phase : "wellbeing",
     },
   };
 }

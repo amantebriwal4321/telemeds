@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Copied from the transformers package at install. Not application source.
+    "public/onnx/**",
   ]),
 ]);
 

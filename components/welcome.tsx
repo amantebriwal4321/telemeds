@@ -1,3 +1,4 @@
+import { PrivacyPanel } from "@/components/privacy-panel";
 import { language } from "@/lib/language";
 import { Button } from "@/components/ui/button";
 
@@ -21,6 +22,7 @@ export function Welcome({
         <h1 className="mt-2 font-heading text-4xl leading-tight sm:text-5xl">{ui.welcomeTitle}</h1>
         <p className="mt-4 text-base leading-7 text-muted-foreground">{ui.welcomeBody}</p>
       </div>
+      <PrivacyPanel />
       <ul className="space-y-2 rounded-3xl border border-border bg-card px-4 py-4 text-sm leading-6">
         {ui.welcomePoints.map((point) => (
           <li key={point}>{point}</li>

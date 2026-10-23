@@ -15,7 +15,7 @@ export function Composer({
   onFinish,
   onHearAgain,
 }: {
-  status: "idle" | "listening" | "transcribing" | "thinking" | "speaking";
+  status: "idle" | "listening" | "transcribing" | "thinking" | "speaking" | "preparing";
   draft: string;
   blocked: boolean;
   showHearAgain: boolean;
@@ -37,7 +37,7 @@ export function Composer({
         <button
           type="button"
           onClick={onMic}
-          disabled={blocked}
+          disabled={blocked || status === "preparing" || status === "speaking"}
           aria-pressed={listening}
           aria-label={listening ? "Stop and send what I said" : "Speak"}
           className="relative grid size-24 place-items-center rounded-full bg-primary text-primary-foreground shadow-[0_16px_40px_-18px] shadow-primary outline-none focus-visible:ring-3 focus-visible:ring-ring disabled:opacity-50"
@@ -61,26 +61,26 @@ export function Composer({
           placeholder={language.ui.typePlaceholder}
           aria-label={language.ui.typePlaceholder}
           className="h-12 rounded-full px-4 text-base md:text-base"
-          disabled={blocked || listening}
+          disabled={listening || status === "transcribing" || status === "thinking"}
         />
         <Button
           type="submit"
           variant="secondary"
           className="h-12 rounded-full px-4"
-          disabled={blocked || listening || !draft.trim()}
+          disabled={listening || status === "transcribing" || status === "thinking" || !draft.trim()}
         >
           {language.ui.send}
         </Button>
       </form>
       <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-        <Button type="button" variant="ghost" className="h-9 rounded-full px-3" onClick={onSkip} disabled={blocked || listening}>
+        <Button type="button" variant="ghost" className="h-9 rounded-full px-3" onClick={onSkip} disabled={listening || status === "transcribing" || status === "thinking"}>
           {language.ui.skip}
         </Button>
-        <Button type="button" variant="ghost" className="h-9 rounded-full px-3" onClick={onFinish} disabled={blocked || listening}>
+        <Button type="button" variant="ghost" className="h-9 rounded-full px-3" onClick={onFinish} disabled={listening || status === "transcribing" || status === "thinking"}>
           {language.ui.finish}
         </Button>
         {showHearAgain ? (
-          <Button type="button" variant="ghost" className="h-9 rounded-full px-3" onClick={onHearAgain} disabled={blocked || listening}>
+          <Button type="button" variant="ghost" className="h-9 rounded-full px-3" onClick={onHearAgain} disabled={listening || status === "transcribing" || status === "thinking"}>
             {language.ui.hearAgain}
           </Button>
         ) : null}

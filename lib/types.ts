@@ -1,11 +1,8 @@
 export const PHASES = [
-  "mood",
-  "sleep",
-  "nourishment",
-  "symptoms",
-  "pregnancy",
-  "menstrual",
-  "red_flags",
+  "wellbeing",
+  "concern",
+  "care",
+  "first_aid",
   "summary",
   "urgent_stop",
 ] as const;
@@ -21,11 +18,9 @@ export type Turn = {
 
 export type CheckInSummary = {
   wellbeing: string;
-  sleep: string;
-  nourishment: string;
-  symptoms: string;
-  pregnancy: string;
-  menstrual: string;
+  concern: string;
+  comfort: string;
+  firstAid: string;
   urgentConcerns: string;
   forClinician: string;
 };

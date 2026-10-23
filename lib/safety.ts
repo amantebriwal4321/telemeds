@@ -59,8 +59,43 @@ export function mentionsSelfHarm(text: string): boolean {
   );
 }
 
+const HANDS_ON: RegExp[] = [
+  /bleed/i,
+  /blood (is )?pour/i,
+  /\bwound\b/i,
+  /chok/i,
+  /can'?t breathe/i,
+  /cannot breathe/i,
+  /trouble breathing/i,
+  /hard to breathe/i,
+  /short of breath/i,
+  /\bfainted\b/i,
+  /passed out/i,
+  /\bseizure\b/i,
+  /convuls/i,
+  /chest pain/i,
+  /unconscious/i,
+  /\bcollapsed?\b/i,
+  /\bburns?\b/i,
+  /\bburned\b/i,
+  /\binjur/i,
+];
+
+const DOSE = /\b\d+\s?(mg|mcg|milligrams?|grams?)\b/i;
+const MEDICINE =
+  /\b(ibuprofen|paracetamol|acetaminophen|aspirin|amoxicillin|antibiotic|prescription)\b/i;
+const DIAGNOSIS = /\b(you have (a|an|the)|diagnos)/i;
+
 export function mentionsMedicalRedFlag(text: string): boolean {
   return MEDICAL.some((pattern) => matched(text, pattern, true));
+}
+
+export function needsHandsOnFirstAid(text: string): boolean {
+  return HANDS_ON.some((pattern) => matched(text, pattern, true));
+}
+
+export function replyIsUnsafe(text: string): boolean {
+  return DOSE.test(text) || MEDICINE.test(text) || DIAGNOSIS.test(text) || GRAPHIC.test(text);
 }
 
 export function selfHarmTurn(): CheckInTurn {
@@ -72,11 +107,9 @@ export function selfHarmTurn(): CheckInTurn {
     urgentKind: "self_harm",
     summary: {
       wellbeing: ui.notDiscussed,
-      sleep: ui.notDiscussed,
-      nourishment: ui.notDiscussed,
-      symptoms: ui.notDiscussed,
-      pregnancy: ui.notDiscussed,
-      menstrual: ui.notDiscussed,
+      concern: ui.notDiscussed,
+      comfort: ui.notDiscussed,
+      firstAid: ui.notDiscussed,
       urgentConcerns: safety.selfHarmSummary,
       forClinician: safety.selfHarmClinician,
     },
@@ -91,7 +124,7 @@ export function usableCrisisSummary(summary: CheckInSummary | null): CheckInSumm
 }
 
 function alreadyAdvisesCare(reply: string): boolean {
-  return /\b(clinic|midwife|ambulance|doctor|102|urgent care)\b/i.test(reply);
+  return /\b(clinician|clinic|midwife|ambulance|doctor|102|urgent care)\b/i.test(reply);
 }
 
 export function applyMedicalSafety(turn: CheckInTurn, latestUserText: string): CheckInTurn {
@@ -103,11 +136,7 @@ export function applyMedicalSafety(turn: CheckInTurn, latestUserText: string): C
     };
   }
 
-  const modelMedical =
-    turn.urgentKind === "medical" ||
-    (turn.urgent &&
-      (turn.phase === "red_flags" || turn.phase === "summary" || turn.phase === "urgent_stop"));
-  const medical = modelMedical || mentionsMedicalRedFlag(latestUserText);
+  const medical = turn.urgentKind === "medical" || mentionsMedicalRedFlag(latestUserText);
   if (!medical) {
     return { ...turn, urgent: false, urgentKind: "none" };
   }

@@ -2,17 +2,36 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { language } from "./language.ts";
-import { systemPrompt } from "./prompt.ts";
+import { startInstruction, systemPrompt } from "./prompt.ts";
 
-test("the english prompt leads the required check-in and refuses diagnosis", () => {
+test("the english prompt is a deferential on-device companion", () => {
   const prompt = systemPrompt();
-  for (const topic of ["sleep", "Food and water", "Pregnancy", "Menstrual", "fever", "trouble breathing"]) {
-    assert.match(prompt, new RegExp(topic, "i"));
+  for (const phrase of [
+    "Assalaam-o-alaikum",
+    "Khuda hafiz",
+    "eXsanguinating hemorrhage",
+    "Airway",
+    "Breathing",
+    "Circulation",
+    "Disability",
+    "Exposure",
+    "home",
+    "never diagnose",
+    "one question at a time",
+    "harming herself",
+    "clinician",
+    "do not probe",
+    "pregnancy",
+    "fever",
+    "trouble breathing",
+  ]) {
+    assert.match(prompt, new RegExp(phrase, "i"));
   }
-  assert.match(prompt, /never diagnose/i);
-  assert.match(prompt, /one question at a time/i);
-  assert.match(prompt, /hurting herself/i);
-  assert.equal(language.tts.voice, "shimmer");
+  assert.match(startInstruction(), /Assalaam-o-alaikum/);
+  assert.equal(language.tts.engine, "speech-synthesis");
+  assert.equal(language.tts.preferLocal, true);
   assert.equal(language.stt.language, "en");
+  assert.equal(language.stt.device, "wasm");
+  assert.equal(language.llm.device, "wasm");
   assert.equal(language.direction, "ltr");
 });
